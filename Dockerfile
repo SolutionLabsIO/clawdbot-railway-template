@@ -34,6 +34,9 @@ RUN set -eux; \
 
 RUN pnpm install --no-frozen-lockfile
 
+# Cache-bust: change this value to force rebuild from this point
+ARG CACHE_BUST=2026-02-17a
+
 # Patch: Add Sonnet 4.6 support (not yet in upstream OpenClaw)
 # 1. Alias: short name "sonnet-4.6" → API model ID "claude-sonnet-4-6"
 RUN sed -i '/"sonnet-4.5": "claude-sonnet-4-5",/a\  "sonnet-4.6": "claude-sonnet-4-6",' /openclaw/src/agents/model-selection.ts
