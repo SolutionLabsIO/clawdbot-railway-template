@@ -33,6 +33,8 @@ RUN set -eux; \
   done
 
 RUN pnpm install --no-frozen-lockfile
+# Add Sonnet 4.6 to model registry
+RUN sed -i '/"sonnet-4.5": "claude-sonnet-4-5",/a\  "sonnet-4.6": "claude-sonnet-4-6",' /openclaw/src/agents/model-selection.ts
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:install && pnpm ui:build
