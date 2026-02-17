@@ -33,8 +33,14 @@ RUN set -eux; \
   done
 
 RUN pnpm install --no-frozen-lockfile
-# Add Sonnet 4.6 to model registry
+
+# Patch: Add Sonnet 4.6 support (not yet in upstream OpenClaw)
+# 1. Alias: short name "sonnet-4.6" → API model ID "claude-sonnet-4-6"
 RUN sed -i '/"sonnet-4.5": "claude-sonnet-4-5",/a\  "sonnet-4.6": "claude-sonnet-4-6",' /openclaw/src/agents/model-selection.ts
+# 2. Forward-compat: register capabilities by cloning sonnet-4-5 template
+COPY scripts/patch-sonnet-46.mjs /tmp/patch-sonnet-46.mjs
+RUN node /tmp/patch-sonnet-46.mjs
+
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:install && pnpm ui:build
@@ -63,9 +69,11 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"'
   && chmod +x /usr/local/bin/openclaw
 
 COPY src ./src
+COPY scripts ./scripts
+COPY workspaces ./workspaces
 
 # The wrapper listens on this port.
 ENV OPENCLAW_PUBLIC_PORT=8080
 ENV PORT=8080
 EXPOSE 8080
-CMD ["node", "src/server.js"]
+CMD ["bash", "-c", "bash /app/scripts/seed-workspaces.sh && exec node src/server.js"]
