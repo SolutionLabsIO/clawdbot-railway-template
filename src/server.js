@@ -1024,6 +1024,47 @@ server.on("upgrade", async (req, socket, head) => {
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
 
+// Session cleanup cron — removes session files older than 72 hours every 6 hours.
+const SESSION_MAX_AGE_MS = 72 * 60 * 60 * 1000;
+const SESSION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function cleanStaleSessions() {
+  const agentsDir = path.join(STATE_DIR, "agents");
+  if (!fs.existsSync(agentsDir)) return;
+
+  const now = Date.now();
+  let cleaned = 0;
+
+  function walk(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.name.endsWith(".jsonl") && !entry.name.endsWith(".jsonl.lock")) continue;
+      try {
+        const stat = fs.statSync(full);
+        if (now - stat.mtimeMs > SESSION_MAX_AGE_MS) {
+          fs.unlinkSync(full);
+          cleaned++;
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  walk(agentsDir);
+  if (cleaned > 0) {
+    console.log(`[session-cleanup] Removed ${cleaned} stale session files (>72h old)`);
+  }
+}
+
+// Run once on startup, then every 6 hours.
+setTimeout(cleanStaleSessions, 30_000);
+setInterval(cleanStaleSessions, SESSION_CLEANUP_INTERVAL_MS);
+
 process.on("SIGTERM", () => {
   // Best-effort shutdown
   try {
