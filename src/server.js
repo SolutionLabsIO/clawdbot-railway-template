@@ -183,6 +183,18 @@ async function startGateway() {
   gatewayProc.on("exit", (code, signal) => {
     console.error(`[gateway] exited code=${code} signal=${signal}`);
     gatewayProc = null;
+
+    // Auto-restart on unexpected exit (not SIGTERM from our own restartGateway).
+    if (signal !== "SIGTERM" && isConfigured()) {
+      console.error("[gateway] unexpected exit — scheduling auto-restart in 2s");
+      setTimeout(() => {
+        if (!gatewayProc && isConfigured()) {
+          ensureGatewayRunning().catch((err) => {
+            console.error("[gateway] auto-restart failed:", String(err));
+          });
+        }
+      }, 2000);
+    }
   });
 }
 
@@ -211,8 +223,8 @@ async function restartGateway() {
     } catch {
       // ignore
     }
-    // Give it a moment to exit and release the port.
-    await sleep(750);
+    // Give it enough time to exit and release the port/lock.
+    await sleep(3000);
     gatewayProc = null;
   }
   return ensureGatewayRunning();
@@ -246,8 +258,17 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
-// Minimal health endpoint for Railway.
-app.get("/setup/healthz", (_req, res) => res.json({ ok: true }));
+// Health endpoint for Railway — probes the actual gateway.
+app.get("/setup/healthz", async (_req, res) => {
+  if (!isConfigured()) return res.json({ ok: true, gateway: "not configured" });
+  if (!gatewayProc) return res.status(503).json({ ok: false, gateway: "not running" });
+  try {
+    const probe = await fetch(`${GATEWAY_TARGET}/`, { method: "GET", signal: AbortSignal.timeout(5000) });
+    return res.json({ ok: true, gateway: "up", status: probe.status });
+  } catch {
+    return res.status(503).json({ ok: false, gateway: "unreachable" });
+  }
+});
 
 app.get("/setup/app.js", requireSetupAuth, (_req, res) => {
   // Serve JS for /setup (kept external to avoid inline encoding/template issues)
