@@ -1065,6 +1065,88 @@ function cleanStaleSessions() {
 setTimeout(cleanStaleSessions, 30_000);
 setInterval(cleanStaleSessions, SESSION_CLEANUP_INTERVAL_MS);
 
+// Daily backup cron — saves config + state to /data/backups/ every 24h.
+const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const BACKUP_DIR = path.join("/data", "backups");
+const MAX_BACKUPS = 7;
+
+function runDailyBackup() {
+  if (!isConfigured()) return;
+
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const backupPath = path.join(BACKUP_DIR, `config-${ts}.json`);
+
+    // Backup the config file
+    const cfgPath = configPath();
+    if (fs.existsSync(cfgPath)) {
+      fs.copyFileSync(cfgPath, backupPath);
+    }
+
+    // Prune old backups (keep last 7)
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith("config-") && f.endsWith(".json"))
+      .sort()
+      .reverse();
+
+    for (const f of files.slice(MAX_BACKUPS)) {
+      try { fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch { /* skip */ }
+    }
+
+    console.log(`[backup] Saved ${backupPath} (${files.length + 1} total, keeping ${MAX_BACKUPS})`);
+  } catch (err) {
+    console.error("[backup] Failed:", String(err));
+  }
+}
+
+// Run 1 min after startup, then every 24h.
+setTimeout(runDailyBackup, 60_000);
+setInterval(runDailyBackup, BACKUP_INTERVAL_MS);
+
+// Cost tracking endpoint — exposes session token usage for monitoring.
+app.get("/setup/api/costs", requireSetupAuth, async (_req, res) => {
+  try {
+    const r = await runCmd(OPENCLAW_NODE, clawArgs(["status"]));
+    const output = r.output || "";
+
+    // Extract session info
+    const sessions = [];
+    const lines = output.split("\n");
+    let inSessions = false;
+    for (const line of lines) {
+      if (line.includes("Sessions") && line.includes("active")) {
+        inSessions = true;
+        continue;
+      }
+      if (inSessions && line.includes("agent:")) {
+        const match = line.match(/agent:(\S+)\s+│\s+(\S+)\s+│\s+(\S+)\s+│\s+(\S+)\s+│\s+(\S+)/);
+        if (match) {
+          sessions.push({ key: match[1], kind: match[2].trim(), age: match[3].trim(), model: match[4].trim(), tokens: match[5].trim() });
+        }
+      }
+    }
+
+    // Parse total tokens
+    let totalTokens = 0;
+    for (const s of sessions) {
+      const m = s.tokens.match(/(\d+)k/);
+      if (m) totalTokens += parseInt(m[1]) * 1000;
+    }
+
+    res.json({
+      ok: true,
+      activeSessions: sessions.length,
+      totalTokensInContext: totalTokens,
+      sessions,
+      note: "Token counts are current context sizes, not cumulative API usage. For billing, check your Anthropic dashboard."
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 // Gateway health monitor — checks every 2 min, alerts via Slack DM if down.
 const HEALTH_CHECK_INTERVAL_MS = 2 * 60 * 1000;
 let gatewayDownSince = null;
