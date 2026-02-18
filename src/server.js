@@ -1065,6 +1065,81 @@ function cleanStaleSessions() {
 setTimeout(cleanStaleSessions, 30_000);
 setInterval(cleanStaleSessions, SESSION_CLEANUP_INTERVAL_MS);
 
+// Gateway health monitor — checks every 2 min, alerts via Slack DM if down.
+const HEALTH_CHECK_INTERVAL_MS = 2 * 60 * 1000;
+let gatewayDownSince = null;
+let alertSent = false;
+
+async function sendSlackAlert(message) {
+  try {
+    const cfgRaw = fs.readFileSync(configPath(), "utf8");
+    const cfg = JSON.parse(cfgRaw);
+    const botToken = cfg?.channels?.slack?.accounts?.main?.botToken;
+    const userId = process.env.ALERT_SLACK_USER_ID;
+    if (!botToken || !userId) {
+      console.error("[monitor] Cannot send Slack alert: missing botToken or ALERT_SLACK_USER_ID");
+      return;
+    }
+
+    // Open a DM channel
+    const openRes = await fetch("https://slack.com/api/conversations.open", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${botToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ users: userId }),
+    });
+    const openData = await openRes.json();
+    if (!openData.ok) {
+      console.error("[monitor] Slack conversations.open failed:", openData.error);
+      return;
+    }
+
+    // Send alert
+    await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${botToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: openData.channel.id, text: message }),
+    });
+    console.log("[monitor] Slack alert sent");
+  } catch (err) {
+    console.error("[monitor] Failed to send Slack alert:", String(err));
+  }
+}
+
+async function checkGatewayHealth() {
+  if (!isConfigured() || !gatewayProc) return;
+
+  try {
+    const res = await fetch(`${GATEWAY_TARGET}/`, { method: "GET", signal: AbortSignal.timeout(5000) });
+    if (res) {
+      // Gateway is up — reset state
+      if (gatewayDownSince) {
+        const downtime = Math.round((Date.now() - gatewayDownSince) / 1000);
+        console.log(`[monitor] Gateway recovered after ${downtime}s`);
+        sendSlackAlert(`Gateway recovered after ${downtime}s downtime.`);
+      }
+      gatewayDownSince = null;
+      alertSent = false;
+      return;
+    }
+  } catch {
+    // Gateway unreachable
+  }
+
+  if (!gatewayDownSince) {
+    gatewayDownSince = Date.now();
+  }
+
+  const downFor = Date.now() - gatewayDownSince;
+  // Alert after 4 minutes of downtime (2 consecutive failures)
+  if (downFor >= 4 * 60 * 1000 && !alertSent) {
+    console.error(`[monitor] Gateway has been down for ${Math.round(downFor / 1000)}s — sending alert`);
+    await sendSlackAlert(`Gateway has been down for ${Math.round(downFor / 1000)}s. Auto-restart may have failed. Check Railway dashboard.`);
+    alertSent = true;
+  }
+}
+
+setTimeout(() => setInterval(checkGatewayHealth, HEALTH_CHECK_INTERVAL_MS), 60_000);
+
 process.on("SIGTERM", () => {
   // Best-effort shutdown
   try {
