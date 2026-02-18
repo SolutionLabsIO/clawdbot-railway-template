@@ -34,8 +34,9 @@ RUN set -eux; \
 
 RUN pnpm install --no-frozen-lockfile
 
-# Patch: Add Sonnet 4.6 alias to model registry
-RUN sed -i '/"sonnet-4.5": "claude-sonnet-4-5",/a\  "sonnet-4.6": "claude-sonnet-4-6",' /openclaw/src/agents/model-selection.ts
+# Patch: Add Sonnet 4.6 alias if not already present in upstream
+RUN grep -q '"sonnet-4.6"' /openclaw/src/agents/model-selection.ts \
+  || sed -i '/"sonnet-4.5": "claude-sonnet-4-5",/a\  "sonnet-4.6": "claude-sonnet-4-6",' /openclaw/src/agents/model-selection.ts
 
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
