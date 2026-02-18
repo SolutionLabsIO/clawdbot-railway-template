@@ -22,6 +22,8 @@ WORKDIR /openclaw
 
 # Pin to a known ref (tag/branch). If it doesn't exist, fall back to main.
 ARG OPENCLAW_GIT_REF=main
+# Bust cache to pull latest upstream (change date to force rebuild)
+ARG OPENCLAW_CACHE_BUST=2026-02-18
 RUN git clone --depth 1 --branch "${OPENCLAW_GIT_REF}" https://github.com/openclaw/openclaw.git .
 
 # Patch: relax version requirements for packages that may reference unpublished versions.
