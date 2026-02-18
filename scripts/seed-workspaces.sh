@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Seed agent workspace files from the Docker image into the persistent volume.
-# Only copies files that don't already exist (so manual edits on the volume are preserved).
-# To force-update, delete the file on the volume and redeploy.
+# - New files: created automatically
+# - Existing files: updated only if the image version is newer (checksum differs)
+# - Manual edits on the volume will be overwritten on next deploy if the image file changed.
+#   To preserve local edits, make the change in the repo instead.
 
 set -e
 
@@ -11,12 +13,24 @@ SEED_DIR="/app/workspaces"
 
 seed_file() {
   local src="$1" dst="$2"
+  mkdir -p "$(dirname "$dst")"
+
   if [ ! -f "$dst" ]; then
-    mkdir -p "$(dirname "$dst")"
     cp "$src" "$dst"
     echo "[seed] Created $dst"
+    return
+  fi
+
+  # Update if content differs (image has a newer version)
+  local src_hash dst_hash
+  src_hash=$(md5sum "$src" 2>/dev/null | awk '{print $1}') || src_hash=$(md5 -q "$src" 2>/dev/null)
+  dst_hash=$(md5sum "$dst" 2>/dev/null | awk '{print $1}') || dst_hash=$(md5 -q "$dst" 2>/dev/null)
+
+  if [ "$src_hash" != "$dst_hash" ]; then
+    cp "$src" "$dst"
+    echo "[seed] Updated $dst (content changed)"
   else
-    echo "[seed] Exists, skipping $dst"
+    echo "[seed] Up to date $dst"
   fi
 }
 
