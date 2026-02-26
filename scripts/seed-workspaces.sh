@@ -46,4 +46,8 @@ for f in "$SEED_DIR/kimi"/*; do
   seed_file "$f" "$KIMI_WS/$(basename "$f")"
 done
 
+# Exec approvals (allowlist shell commands for cron/unattended sessions)
+OPENCLAW_STATE="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
+seed_file "/app/config/exec-approvals.json" "$OPENCLAW_STATE/exec-approvals.json"
+
 echo "[seed] Workspace seeding complete."
